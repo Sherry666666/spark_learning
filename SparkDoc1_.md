@@ -106,4 +106,11 @@ peopleDS.show()
 // +----+-------+
 ```
 
+# **RDD与Dataset的转换**
+Spark SQL有两种不同的方法将已存在的RDDs转换成DataSets。
+1、使用反射来获取包含特定对象类型的RDD内的schema。
+当已知schema的时，使用基于反射的方法会使得代码更简洁，效果更好。
+2、通过编程接口创建schema，并将其应用到已有的RDD上。
+当运行时才知道列和列类型的情况下，允许你创建DataSets。
+
 
