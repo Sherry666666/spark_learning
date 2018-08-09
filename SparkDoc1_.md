@@ -112,5 +112,46 @@ Spark SQL有两种不同的方法将已存在的RDDs转换成DataSets。
 当已知schema的时，使用基于反射的方法会使得代码更简洁，效果更好。
 2、通过编程接口创建schema，并将其应用到已有的RDD上。
 当运行时才知道列和列类型的情况下，允许你创建DataSets。
+```scala
+/ For implicit conversions from RDDs to DataFrames
+import spark.implicits._
 
+// Create an RDD of Person objects from a text file, convert it to a Dataframe
+val peopleDF = spark.sparkContext
+  .textFile("examples/src/main/resources/people.txt")
+  .map(_.split(","))
+  .map(attributes => Person(attributes(0), attributes(1).trim.toInt))
+  .toDF()
+// Register the DataFrame as a temporary view
+peopleDF.createOrReplaceTempView("people")
+
+// SQL statements can be run by using the sql methods provided by Spark
+val teenagersDF = spark.sql("SELECT name, age FROM people WHERE age BETWEEN 13 AND 19")
+
+// The columns of a row in the result can be accessed by field index
+teenagersDF.map(teenager => "Name: " + teenager(0)).show()
+// +------------+
+// |       value|
+// +------------+
+// |Name: Justin|
+// +------------+
+
+// or by field name
+teenagersDF.map(teenager => "Name: " + teenager.getAs[String]("name")).show()
+// +------------+
+// |       value|
+// +------------+
+// |Name: Justin|
+// +------------+
+
+// No pre-defined encoders for Dataset[Map[K,V]], define explicitly
+implicit val mapEncoder = org.apache.spark.sql.Encoders.kryo[Map[String, Any]]
+//将String用Any表示
+// Primitive types and case classes can be also defined as
+// implicit val stringIntMapEncoder: Encoder[Map[String, Any]] = ExpressionEncoder()
+
+// row.getValuesMap[T] retrieves multiple columns at once into a Map[String, T]
+teenagersDF.map(teenager => teenager.getValuesMap[Any](List("name", "age"))).collect()
+// Array(Map("name" -> "Justin", "age" -> 19))
+```
 
