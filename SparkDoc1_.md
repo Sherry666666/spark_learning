@@ -7,6 +7,9 @@
 
 [functions](http://spark.apache.org/docs/latest/api/scala/index.html#org.apache.spark.sql.functions$)
 
+[部分官方文档翻译](https://blog.csdn.net/u014459326/article/details/53467946)
+
+
 ------
 
 # **综述，Overview**
@@ -155,3 +158,134 @@ teenagersDF.map(teenager => teenager.getValuesMap[Any](List("name", "age"))).col
 // Array(Map("name" -> "Justin", "age" -> 19))
 ```
 
+```scala
+import org.apache.spark.sql.types._
+
+// Create an RDD
+val peopleRDD = spark.sparkContext.textFile("examples/src/main/resources/people.txt")
+
+// The schema is encoded in a string
+val schemaString = "name age"
+
+// Generate the schema based on the string of schema
+val fields = schemaString.split(" ")
+  .map(fieldName => StructField(fieldName, StringType, nullable = true))
+val schema = StructType(fields)
+
+// Convert records of the RDD (people) to Rows
+val rowRDD = peopleRDD
+  .map(_.split(","))
+  .map(attributes => Row(attributes(0), attributes(1).trim))
+
+// Apply the schema to the RDD
+val peopleDF = spark.createDataFrame(rowRDD, schema)
+
+// Creates a temporary view using the DataFrame
+peopleDF.createOrReplaceTempView("people")
+
+// SQL can be run over a temporary view created using DataFrames
+val results = spark.sql("SELECT name FROM people")
+
+// The results of SQL queries are DataFrames and support all the normal RDD operations
+// The columns of a row in the result can be accessed by field index or by field name
+results.map(attributes => "Name: " + attributes(0)).show()
+// +-------------+
+// |        value|
+// +-------------+
+// |Name: Michael|
+// |   Name: Andy|
+// | Name: Justin|
+// +-------------+
+```
+
+# **聚和(Aggregations)**
+常用的聚合函数包括count(), countDistinct(), avg(), max(), min()，除此之外，用户也可自行设定函数。这些函数的本意是为DataFrames设计的。
+## **无类型定义的聚合函数**
+必须继承自UserDefinedAggregateFunction 类
+
+# **数据源**
+Spark SQL的DataFrame接口支持多种数据源的操作。一个DataFrame可以进行RDDs方式的操作，也可以被注册为临时表。把DataFrame注册为临时表之后，就可以对该DataFrame执行SQL查询。
+## **载入保存方法**
+Spark SQL的默认数据源为Parquet格式。数据源为Parquet文件时，Spark SQL可以方便的执行所有的操作。修改配置项spark.sql.sources.default，可修改默认数据源格式。
+```scala
+val df = sqlContext.read.load("examples/src/main/resources/users.parquet")
+df.select("name", "favorite_color").write.save("namesAndFavColors.parquet")
+```
+## **手动指定数据源格式**
+当数据源格式不是parquet格式文件时，需要手动指定数据源的格式。
+如：json, parquet, jdbc, orc, libsvm, csv, text
+```scala
+//加载json数据的例子
+val df = sqlContext.read.format("json").load("examples/src/main/resources/people.json")
+df.select("name", "age").write.format("parquet").save("namesAndAges.parquet")
+```
+```scala
+//加载csv数据的例子
+val peopleDFCsv = spark.read.format("csv")
+  .option("sep", ";")
+  .option("inferSchema", "true")
+  .option("header", "true")
+  .load("examples/src/main/resources/people.csv")
+  ```
+除了上面load的方法外，也可以使用查询方式转成DataFrames格式
+```scala
+val sqlDF = spark.sql("SELECT * FROM parquet.`examples/src/main/resources/users.parquet`")
+```
+## **保存模式**
+|Scala/Java| Any Language	| Meaning|
+|:----------:|:----------:|:-------:|
+|SaveMode.ErrorIfExists (default)| "error" or "errorifexists" (default)|当将DataFrame保存到数据源时，如果数据已经存在，就会抛出异常。
+| SaveMode.Append|"append"|当将DataFrame保存到数据源时，如果数据/表已经存在，那么DataFrame的内容将追加到现有数据中。|
+| SaveMode.Overwrite|"overwrite"|覆盖模式意味着在将DataFrame保存到数据源时，如果数据/表已经存在，那么现有的数据将被DataFrame的内容覆盖。|
+|SaveMode.Ignore|"ignore"|忽略模式意味着，当将DataFrame保存到数据源时，如果数据已经存在，则save操作将不会保存DataFrame的内容，也不会更改现有数据。|
+
+## **保存持久表**
+还可以使用saveAsTable命令将dataframe作为持久化表保存到Hive metastore。注意，使用此特性不需要现有的Hive部署。Spark将为您创建一个默认的本地Hive metastore(使用Derby)。与createOrReplaceTempView命令不同，saveAsTable将实现DataFrame的内容，并创建一个指向Hive metastore中的数据的指针。只要您保持与同一个转移程序的连接，即使在您的Spark程序重新启动之后，持久表仍然存在。
+
+# **JDBC与其他数据库的互动**
+Spark SQL支持使用JDBC访问其他数据库。
+在使用JDBC连接其他数据库时，需要在spark类路径中包含特定数据库的JDBC驱动程序。例如,与postgresql的连接，需要在启动spark时加入后面的程序
+```bash
+bin/spark-shell --driver-class-path postgresql-9.4.1207.jar --jars postgresql-9.4.1207.jar
+```
+```scala
+//scala例子
+// Note: JDBC loading and saving can be achieved via either the load/save or jdbc methods
+// Loading data from a JDBC source
+//方法一
+val jdbcDF = spark.read
+  .format("jdbc")
+  .option("url", "jdbc:postgresql:dbserver")
+  .option("dbtable", "schema.tablename")
+  .option("user", "username")
+  .option("password", "password")
+  .load()
+//方法二
+val connectionProperties = new Properties()
+connectionProperties.put("user", "username")
+connectionProperties.put("password", "password")
+val jdbcDF2 = spark.read
+  .jdbc("jdbc:postgresql:dbserver", "schema.tablename", connectionProperties)
+  
+// Specifying the custom data types of the read schema
+connectionProperties.put("customSchema", "id DECIMAL(38, 0), name STRING")
+val jdbcDF3 = spark.read 
+  .jdbc("jdbc:postgresql:dbserver", "schema.tablename", connectionProperties)
+
+// Saving data to a JDBC source
+jdbcDF.write
+  .format("jdbc")
+  .option("url", "jdbc:postgresql:dbserver")
+  .option("dbtable", "schema.tablename")
+  .option("user", "username")
+  .option("password", "password")
+  .save()
+
+jdbcDF2.write
+  .jdbc("jdbc:postgresql:dbserver", "schema.tablename", connectionProperties)
+
+// Specifying create table column data types on write
+jdbcDF.write
+  .option("createTableColumnTypes", "name CHAR(64), comments VARCHAR(1024)")
+  .jdbc("jdbc:postgresql:dbserver", "schema.tablename", connectionProperties)
+```
